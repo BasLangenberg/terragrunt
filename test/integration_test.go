@@ -589,11 +589,13 @@ func TestTerragruntWorksWithAzurermBackend(t *testing.T) {
 
 	cleanupTerraformFolder(t, TEST_FIXTURE_AZURERM_PATH)
 
-	// We need a project to create the bucket in, so we pull one from the recommended environment variable.
-	project := os.Getenv("GOOGLE_CLOUD_PROJECT")
-	gcsBucketName := fmt.Sprintf("terragrunt-test-bucket-%s", strings.ToLower(uniqueId()))
+	// We need a subscription to create the bucket in, so we pull one from the recommended environment variable.
+	subscription := os.Getenv("ARM_SUBSCRIPTION_ID")
+	uniqueid := strings.ToLower(uniqueId())
+	azureResourceGroupName := fmt.Sprintf("rg-tgtst-%s", uniqueid)
+	azureStorageAccountName := fmt.Sprintf("sttgtst%s", uniqueid)
 
-	defer deleteGCSBucket(t, gcsBucketName)
+	defer deleteAzureRMResourceGroup(t, azureResourceGroupName)
 
 	tmpTerragruntGCSConfigPath := createTmpTerragruntGCSConfig(t, TEST_FIXTURE_GCS_PATH, project, TERRAFORM_REMOTE_STATE_GCP_REGION, gcsBucketName, config.DefaultTerragruntConfigPath)
 	runTerragrunt(t, fmt.Sprintf("terragrunt apply -auto-approve --terragrunt-non-interactive --terragrunt-config %s --terragrunt-working-dir %s", tmpTerragruntGCSConfigPath, TEST_FIXTURE_GCS_PATH))
@@ -3833,6 +3835,48 @@ func deleteGCSBucket(t *testing.T, bucketName string) {
 
 	ctx := context.Background()
 
+	// List all objects including their versions in the bucket
+	bucket := gcsClient.Bucket(bucketName)
+	q := &storage.Query{
+		Versions: true,
+	}
+	it := bucket.Objects(ctx, q)
+	for {
+		objectAttrs, err := it.Next()
+
+		if err == iterator.Done {
+			break
+		}
+
+		if err != nil {
+			t.Fatalf("Failed to list objects and versions in GCS bucket %s: %v", bucketName, err)
+		}
+
+		// purge the object version
+		if err := bucket.Object(objectAttrs.Name).Generation(objectAttrs.Generation).Delete(ctx); err != nil {
+			t.Fatalf("Failed to delete GCS bucket object %s: %v", objectAttrs.Name, err)
+		}
+	}
+
+	// remote empty bucket
+	if err := bucket.Delete(ctx); err != nil {
+		t.Fatalf("Failed to delete GCS bucket %s: %v", bucketName, err)
+	}
+}
+
+// Delete the specified Azure Resource Group to clean up after test
+func deleteAzureRMResourceGroup(t *testing.T, resourceGroup string) {
+	var azConfig remote.RemoteStateConfigAzureRM
+	azClient, err := remote.CreateAzureRMClients(azConfig)
+	if err != nil {
+		t.Fatalf("Error creating AzureRM client: %v", err)
+	}
+
+	t.Logf("Deleting test resource group %s", resourceGroup)
+
+	ctx := context.Background()
+
+	azClient.s
 	// List all objects including their versions in the bucket
 	bucket := gcsClient.Bucket(bucketName)
 	q := &storage.Query{
